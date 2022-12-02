@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "simustocks"
+version = "0.1.0"
+description = "Simulate some stocks prices knowing their historical covariance and a given anual expected returns."
+authors = ["ggelabert <ggelabert@serikat.es>"]
+license = "MIT License"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+
+[tool.poetry.dev-dependencies]
+autoflake = "^2.0.0"
+flake8 = "^6.0.0"
+pre-commit = "^2.20.0"
+
+[tool.poetry.group.test.dependencies]
+pytest = "^7.2.0"
+mypy = "^0.991"
+black = "^22.10.0"
+isort = "^5.10.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
