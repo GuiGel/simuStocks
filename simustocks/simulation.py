@@ -37,9 +37,12 @@ class Simulation:
         """_summary_
 
         Args:
-            cov_h (npt.NDArray): _description_
-            er (npt.ArrayLike): _description_
-            m (int): _description_
+            cov_h (npt.NDArray): Historical prices covariance. Matrix of shape
+                (k, n) where k is the number of stocks and n the number of
+                prices.
+            er (npt.ArrayLike): The expected anual returns for each stocks.
+                List of shape (k, ) where k is the number of stocks.
+            m (int): The number of daily returns to simulate.
         """
         # TODO Check that len(er), len(er) == hc.shape and m > 0
         self.cov_h = cov_h  # historical covariance
