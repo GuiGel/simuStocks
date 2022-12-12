@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import numpy.linalg as la
@@ -7,12 +7,13 @@ import numpy.typing as npt
 from numpy.polynomial import Polynomial as P
 
 from simustocks.errors import CovNotSymDefPos
+from simustocks.stocks import Stocks
 
 logger = logging.getLogger("simustocks")
 
 
 class Simulation:
-    def __init__(self, cov_h: npt.NDArray, er: List[float], m: int) -> None:
+    def __init__(self, stock: Stocks, er: Dict[str, float], m: int) -> None:
         """_summary_
 
         Args:
@@ -23,15 +24,20 @@ class Simulation:
                 List of shape (k, ) where k is the number of stocks.
             m (int): The number of daily returns to simulate.
         """
-        # TODO Check that len(er), len(er) == hc.shape and m > 0
-        self.cov_h = cov_h  # historical covariance
-        self.er = np.array(
-            er
-        )  # predicted anual returns  -> must be converted to np.array
+        self.k, n = stock.prices.shape
+        self.stock = stock
+        self.cov_h = stock.cov  # historical covariance
+        self.er = np.array(list(er.values()))
         self.m = m
-        self.k = len(self.er)  # cov_h (k, k)
 
         assert len(self.er), len(self.er) == cov_h.shape
+        assert m > 0
+
+    @property
+    def init_prices(self):
+        # Get the initialization price for the simulation, the last
+        # prices of the historical prices
+        return self.stock.prices[:, -1:]  # (k, 1)
 
     def correlate(self):
         """Create random vectors that have a given covariance matrix"""
@@ -40,14 +46,16 @@ class Simulation:
         except la.LinAlgError as e:
             raise CovNotSymDefPos(self.cov_h, e)
 
-        s = np.random.normal(0, 1, size=(self.k, self.m))
+        s = np.random.normal(
+            0, 1, size=(self.k, self.m)
+        )  # random simulated prices daily returns
         cov_s = np.cov(s)
         chol_f = np.linalg.cholesky(cov_s)
-        g = chol_h.dot(np.linalg.inv(chol_f).dot(s))  # (4, n-1)
+        g = chol_h.dot(np.linalg.inv(chol_f).dot(s))  # (k, m)
 
         # g are daily returns that must all be inferior to 1!
         if np.all(g < 1):
-            logger.warning("Simulated daily returns not all inf to 1!")
+            logger.warning("Correlated daily returns not all inf to 1!")
 
         return g
 
@@ -55,7 +63,7 @@ class Simulation:
     def ld(g: npt.NDArray, er: npt.NDArray, order: int = 4):
         # g (k, m)
         # er (k)
-        # limited development of the function ln(1+x)
+        # limited development of the function ln(1+x) with x = rc + alpha
         # Returns array of polynomials
         # TODO check that Here 1 + expected returns is always be positive!
 
@@ -115,29 +123,50 @@ class Simulation:
             [np.ones((self.k, 1)), (returns + 1).cumprod(axis=1)], axis=1
         )  # (k, m + 1)
         prices = (
-            returns_extend * (init_prices.T)
+            returns_extend * init_prices
         ).T  # Reconstruct the price from the last prices values. (k, m + 1)
-        return prices
+        return prices  # (k, m + 1)
+
+    def check_returns(self, simulated_returns):
+        # Check that the simulated anual returns are near to the expected ones
+        sr = Simulation.get_anual_returns_from_daily_returns(simulated_returns)
+        check = np.allclose(sr, self.er)
+        logger.info(
+            f"Are the simulated anual returns equal to the expected ones?  {check}"
+        )
+        if not check:
+            returns_errors = sr - self.er
+            stocks_name = self.stock.df.columns.to_list()
+            name_returns = dict(zip(stocks_name, returns_errors))
+            logger.debug(f"anual returns error: {name_returns}")
+
+    def check_covariance(self, cov_s: npt.NDArray) -> None:
+        check = np.allclose(cov_s, self.cov_h)
+        logger.debug(
+            f"Is the simulated covariance matrix the same as the historical one? {check}"
+        )
+
+    @staticmethod
+    def get_anual_returns_from_daily_returns(daily_returns: npt.NDArray) -> npt.NDArray:
+        # daily_returns (k, m)
+        # returns: (k,)
+        sar = np.exp(np.log(1 + daily_returns).sum(axis=-1)) - 1
+        return sar
 
     def __call__(
-        self, order: int = 10, init_prices: Optional[npt.NDArray] = None
+        self, order: int = 10, precision: Optional[float] = None
     ) -> Tuple[npt.NDArray, npt.NDArray, Optional[npt.NDArray]]:
-        # init_prices (1, k)
+        # future_price (m + 1, k)
         correlated_returns = self.correlate()
         adjustment = self.get_returns_adjustment(correlated_returns, order=order)
         simulated_returns = correlated_returns + adjustment
 
         cov_s = np.cov(simulated_returns)
-        np.allclose(cov_s, self.cov_h)  # Verify that the covariance are the same.
+        self.check_covariance(cov_s)
 
-        # Verify that the simulated annual returns are near to the expected ones.
-        sr = np.exp(np.log(1 + simulated_returns).sum(axis=-1)) - 1
-        print(sr - self.er <= 1e-7)  # We see that the error is small
-        # TODO we can log or emit a warning in this case ?
+        self.check_returns(simulated_returns)
 
-        future_prices = None
-        if init_prices is not None:
-            future_prices = self.get_future_prices(init_prices, simulated_returns)
+        future_prices = self.get_future_prices(self.init_prices, simulated_returns)
 
         return simulated_returns, cov_s, future_prices
 

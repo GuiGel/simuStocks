@@ -1,7 +1,6 @@
-from typing import Any
-
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 import pandera as pa
 from pydantic import BaseModel, validator
 
@@ -21,11 +20,11 @@ prices_schema = pa.DataFrameSchema(
 
 class Stocks(BaseModel):
 
-    df: Any  # DataFrame (n, k)
+    df: pd.DataFrame  # DataFrame (n, k)
 
     @property
     def prices(self) -> npt.NDArray:
-        return self.df.to_numpy()  # shape (n, k)
+        return self.df.to_numpy().T  # shape (k, n)
 
     @validator("df")
     def schema(cls, v):
@@ -38,3 +37,15 @@ class Stocks(BaseModel):
     @property
     def returns(self) -> npt.NDArray:
         return self.df.pct_change()[1:].to_numpy().T  # (k, n-1)
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
+if __name__ == "__main__":
+    prices = pd.DataFrame(
+        [[1.0, np.nan, 2.0], [1.0, 2.0, 3.0], [1.0, 3.0, -2, 0]],
+        columns=["a", "b", "c", "d"],
+    )
+    print(prices.iloc[1][0])
+    stocks = Stocks(df=prices)
