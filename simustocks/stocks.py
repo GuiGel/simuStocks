@@ -9,7 +9,7 @@ prices_schema = pa.DataFrameSchema(
         ".*": pa.Column(
             float,
             checks=[
-                pa.Check.greater_than_or_equal_to(0, ignore_na=False),
+                pa.Check.greater_than(0, ignore_na=False),
             ],
             regex=True,
         ),
