@@ -4,6 +4,6 @@
 set -e
 set -x
 
-mypy typer
+mypy simustocks
 black simustocks tests --check
 isort simustocks tests --check-only
