@@ -1,44 +1,23 @@
 import logging
+from typing import List, Optional, Tuple
 
 import numpy as np
 import numpy.linalg as la
 import numpy.typing as npt
 from numpy.polynomial import Polynomial as P
 
+from simustocks.errors import CovNotSymDefPos
+
 logger = logging.getLogger("simustocks")
 
 
-class SimuStockError(Exception):
-    """Generic exception for SimuStock"""
-
-    def __init__(self, msg, original_exception):
-        super(SimuStockError, self).__init__(f"{msg}: {original_exception}")
-        self.original_exception = original_exception
-
-
-class CovNotSymDefPos(SimuStockError):
-    def __init__(self, matrix, original_exception, msg=None):
-        if msg is None:
-            # Set some default useful error message
-            msg = (
-                "Try to do a Choleski decomposition of a matrix that is not "
-                "hermitian positive-definite."
-            )
-        super(CovNotSymDefPos, self).__init__(msg, original_exception)
-        self.matrix = matrix
-
-
-class RootError(SimuStockError):
-    """Basic exception for errors raised during root founding process"""
-
-
 class Simulation:
-    def __init__(self, cov_h: npt.NDArray, er: npt.ArrayLike, m: int) -> None:
+    def __init__(self, cov_h: npt.NDArray, er: List[float], m: int) -> None:
         """_summary_
 
         Args:
             cov_h (npt.NDArray): Historical prices covariance. Matrix of shape
-                (k, n) where k is the number of stocks and n the number of
+                (k, k) where k is the number of stocks and n the number of
                 prices.
             er (npt.ArrayLike): The expected anual returns for each stocks.
                 List of shape (k, ) where k is the number of stocks.
@@ -55,6 +34,7 @@ class Simulation:
         assert len(self.er), len(self.er) == cov_h.shape
 
     def correlate(self):
+        """Create random vectors that have a given covariance matrix"""
         try:
             chol_h = la.cholesky(self.cov_h)
         except la.LinAlgError as e:
@@ -66,11 +46,13 @@ class Simulation:
         g = chol_h.dot(np.linalg.inv(chol_f).dot(s))  # (4, n-1)
 
         # g are daily returns that must all be inferior to 1!
-        assert np.all(g < 1), f"Simulated returns not inf to 1!"
+        if np.all(g < 1):
+            logger.warning("Simulated daily returns not all inf to 1!")
+
         return g
 
     @staticmethod
-    def ld(g: np.ndarray, er: np.ndarray, order: int = 4):
+    def ld(g: npt.NDArray, er: npt.NDArray, order: int = 4):
         # g (k, m)
         # er (k)
         # limited development of the function ln(1+x)
@@ -100,7 +82,7 @@ class Simulation:
         # ------------- select the roots that respect the constrains
         w = (1 + real_roots + min_r > 0) & (real_roots + max_r < 1)
         if not np.any(w):
-            logger.warning("Not root found that respect the limits!")
+            logger.warning("Not roots respect the constraints!")
         select_roots = real_roots[w]
         if len(select_roots) > 1:  # This permit (ri + root)^n --> 0
             root_arg = np.argmin(select_roots + max_r)
@@ -109,9 +91,9 @@ class Simulation:
             root = select_roots[0]
         return root
 
-    def __call__(self):
-        s = self.correlate()
-        lds = self.ld(s, self.er, order=3)
+    def get_returns_adjustment(self, s: npt.NDArray, order: int = 10) -> npt.NDArray:
+        # order > 2
+        lds = self.ld(s, self.er, order=order)
 
         min_daily_returns = s.min(axis=-1)
         max_daily_returns = s.max(axis=-1)
@@ -124,16 +106,40 @@ class Simulation:
             alpha.append(root)  # Todo --> Look for max...
 
         alpha = np.expand_dims(alpha, 1)
-        f = s + alpha
-        cov_f = np.cov(f)
+        return alpha  # ()
 
-        np.allclose(cov_f, self.cov_h)  # Verify that the covariance are the same.
+    def get_future_prices(
+        self, init_prices: npt.NDArray, returns: npt.NDArray
+    ) -> npt.NDArray:
+        returns_extend = np.concatenate(
+            [np.ones((self.k, 1)), (returns + 1).cumprod(axis=1)], axis=1
+        )  # (k, m + 1)
+        prices = (
+            returns_extend * (init_prices.T)
+        ).T  # Reconstruct the price from the last prices values. (k, m + 1)
+        return prices
+
+    def __call__(
+        self, order: int = 10, init_prices: Optional[npt.NDArray] = None
+    ) -> Tuple[npt.NDArray, npt.NDArray, Optional[npt.NDArray]]:
+        # init_prices (1, k)
+        correlated_returns = self.correlate()
+        adjustment = self.get_returns_adjustment(correlated_returns, order=order)
+        simulated_returns = correlated_returns + adjustment
+
+        cov_s = np.cov(simulated_returns)
+        np.allclose(cov_s, self.cov_h)  # Verify that the covariance are the same.
 
         # Verify that the simulated annual returns are near to the expected ones.
-        sr = np.exp(np.log(1 + f).sum(axis=-1)) - 1
+        sr = np.exp(np.log(1 + simulated_returns).sum(axis=-1)) - 1
         print(sr - self.er <= 1e-7)  # We see that the error is small
         # TODO we can log or emit a warning in this case ?
-        return f, cov_f
+
+        future_prices = None
+        if init_prices is not None:
+            future_prices = self.get_future_prices(init_prices, simulated_returns)
+
+        return simulated_returns, cov_s, future_prices
 
 
 if __name__ == "__main__":
@@ -163,7 +169,7 @@ if __name__ == "__main__":
     cov_h = np.cov(r)
     print(cov_h)
     simu = Simulation(cov_h, [0.05, -0.04, 0.1], 250)
-    f, f_cov = simu()
+    f, f_cov, f_prices = simu()
 
     print(f"------------------ Simulation \n")
     r1 = np.random.normal(10, 0.2, size=250)
@@ -171,8 +177,16 @@ if __name__ == "__main__":
     r3 = np.random.normal(500, 0.2, size=250)
 
     r = np.vstack((r1, r2, r3))  # The daily returns must be < 1 !
+    print(r.shape)
 
     assert np.all(r > 0)
     cov_h = np.cov(r)
     simu = Simulation(cov_h, [0.05, -0.04, 0.1], 250)
-    f, f_cov = simu()
+    f, f_cov, f_prices = simu()
+    print(f.shape)  # (k, m)
+
+    # Recover the price from the simulated daily returns
+    # k = f.shape()[0]
+    # simuI = np.concatenate([np.ones((k, 1)), (f + 1).cumprod(axis=1)], axis=1)  # interets cumulés
+    # prices = np.array([[1], [1], [1]])
+    # S_recover = simuI*prices[:,-1:]  # Reconstruct the price from the last prices values.
