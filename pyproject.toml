@@ -6,11 +6,12 @@ authors = ["ggelabert <ggelabert@serikat.es>"]
 license = "MIT License"
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.9,<3.12"
 numpy = "^1.23.5"
 pandera = "^0.13.4"
 pydantic = "^1.10.2"
 pandas-datareader = "^0.10.0"
+pandas-stubs = "^1.5.2.221124"
 
 [tool.poetry.dev-dependencies]
 autoflake = "^2.0.0"
