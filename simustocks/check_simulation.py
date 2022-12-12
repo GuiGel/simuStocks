@@ -43,9 +43,9 @@ def get_returns(array: npt.NDArray) -> npt.NDArray:
 
 
 recovered_returns = get_returns(future_prices)
-future_cov = np.cov(recovered_returns.T)
-
 np.allclose(recovered_returns, future_returns.T)
 history_returns = get_returns(stocks_history.prices.T)
+
+future_cov = np.cov(recovered_returns.T)
 history_cov = np.cov(history_returns.T)
 np.allclose(history_cov, future_cov)

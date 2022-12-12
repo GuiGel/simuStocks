@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import numpy.linalg as la
@@ -30,7 +30,7 @@ class Simulation:
         self.er = np.array(list(er.values()))
         self.m = m
 
-        assert len(self.er), len(self.er) == cov_h.shape
+        assert len(self.er), len(self.er) == self.cov_h.shape
         assert m > 0
 
     @property
@@ -57,7 +57,7 @@ class Simulation:
         if np.all(g < 1):
             logger.warning("Correlated daily returns not all inf to 1!")
 
-        return g
+        return g  # (k, k)
 
     @staticmethod
     def ld(g: npt.NDArray, er: npt.NDArray, order: int = 4):
@@ -106,15 +106,14 @@ class Simulation:
         min_daily_returns = s.min(axis=-1)
         max_daily_returns = s.max(axis=-1)
 
-        alpha = []
+        alpha: List[float] = []
         for dl, r_min, r_max in zip(lds, min_daily_returns, max_daily_returns):
             # r_min can be negative
             logger.info(f"{dl=}, {r_min=}, {r_max=}")
             root = self.get_root(dl, r_min, r_max)
             alpha.append(root)  # Todo --> Look for max...
 
-        alpha = np.expand_dims(alpha, 1)
-        return alpha  # ()
+        return np.expand_dims(alpha, axis=1)  # (k, 1)
 
     def get_future_prices(
         self, init_prices: npt.NDArray, returns: npt.NDArray
@@ -155,7 +154,7 @@ class Simulation:
 
     def __call__(
         self, order: int = 10, precision: Optional[float] = None
-    ) -> Tuple[npt.NDArray, npt.NDArray, Optional[npt.NDArray]]:
+    ) -> Tuple[npt.NDArray, npt.NDArray, npt.NDArray]:
         # future_price (m + 1, k)
         correlated_returns = self.correlate()
         adjustment = self.get_returns_adjustment(correlated_returns, order=order)
@@ -169,53 +168,3 @@ class Simulation:
         future_prices = self.get_future_prices(self.init_prices, simulated_returns)
 
         return simulated_returns, cov_s, future_prices
-
-
-if __name__ == "__main__":
-
-    logging.basicConfig(encoding="utf-8", level=logging.DEBUG)
-
-    try:
-        cov_h = np.ones((3, 3))
-        simu = Simulation(cov_h, [0.05, -0.04, 0.1], 50)
-        s = simu.correlate()
-    except CovNotSymDefPos:
-        print(f"fails as expected!")
-
-    print(f"------------------ Simulation \n")
-    r1 = np.random.normal(10, 1, size=250)
-    r2 = np.random.normal(200, 10, size=250)
-    r3 = np.random.normal(500, 1, size=250)
-
-    r = np.vstack((r1, r2, r3))  # The daily returns must be < 1 !
-
-    r = np.diff(r) / r[:, 1:]
-    assert np.all(
-        np.abs(r) < 1
-    )  # does not mean that the simulated returns will be > 1 but probable.
-
-    # assert np.all(r > 0)
-    cov_h = np.cov(r)
-    print(cov_h)
-    simu = Simulation(cov_h, [0.05, -0.04, 0.1], 250)
-    f, f_cov, f_prices = simu()
-
-    print(f"------------------ Simulation \n")
-    r1 = np.random.normal(10, 0.2, size=250)
-    r2 = np.random.normal(200, 0.2, size=250)
-    r3 = np.random.normal(500, 0.2, size=250)
-
-    r = np.vstack((r1, r2, r3))  # The daily returns must be < 1 !
-    print(r.shape)
-
-    assert np.all(r > 0)
-    cov_h = np.cov(r)
-    simu = Simulation(cov_h, [0.05, -0.04, 0.1], 250)
-    f, f_cov, f_prices = simu()
-    print(f.shape)  # (k, m)
-
-    # Recover the price from the simulated daily returns
-    # k = f.shape()[0]
-    # simuI = np.concatenate([np.ones((k, 1)), (f + 1).cumprod(axis=1)], axis=1)  # interets cumulés
-    # prices = np.array([[1], [1], [1]])
-    # S_recover = simuI*prices[:,-1:]  # Reconstruct the price from the last prices values.
