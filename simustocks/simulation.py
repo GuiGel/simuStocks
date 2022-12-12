@@ -8,20 +8,39 @@ from numpy.polynomial import Polynomial as P
 logger = logging.getLogger("simustocks")
 
 
-class NotSymDefPos(la.LinAlgError):
-    def __init__(self, matrix, msg=None):
+class SimuStockError(Exception):
+    """Generic exception for SimuStock"""
+
+    def __init__(self, msg, original_exception):
+        super(SimuStockError, self).__init__(f"{msg}: {original_exception}")
+        self.original_exception = original_exception
+
+
+class CovNotSymDefPos(SimuStockError):
+    def __init__(self, matrix, original_exception, msg=None):
         if msg is None:
             # Set some default useful error message
             msg = (
-                "Try to do a choleski decompostion of a matrix that is not "
+                "Try to do a Choleski decomposition of a matrix that is not "
                 "hermitian positive-definite."
             )
-        super(NotSymDefPos, self).__init__(msg)
+        super(CovNotSymDefPos, self).__init__(msg, original_exception)
         self.matrix = matrix
+
+
+class RootError(SimuStockError):
+    """Basic exception for errors raised during root founding process"""
 
 
 class Simulation:
     def __init__(self, cov_h: npt.NDArray, er: npt.ArrayLike, m: int) -> None:
+        """_summary_
+
+        Args:
+            cov_h (npt.NDArray): _description_
+            er (npt.ArrayLike): _description_
+            m (int): _description_
+        """
         # TODO Check that len(er), len(er) == hc.shape and m > 0
         self.cov_h = cov_h  # historical covariance
         self.er = np.array(
@@ -35,12 +54,10 @@ class Simulation:
     def correlate(self):
         try:
             chol_h = la.cholesky(self.cov_h)
-        except la.LinAlgError:
-            raise NotSymDefPos(self.cov_h)
+        except la.LinAlgError as e:
+            raise CovNotSymDefPos(self.cov_h, e)
 
-        s = np.random.normal(
-            0, 1, size=(self.k, self.m)
-        )  # Simulated data with standard normal distribution
+        s = np.random.normal(0, 1, size=(self.k, self.m))
         cov_s = np.cov(s)
         chol_f = np.linalg.cholesky(cov_s)
         g = chol_h.dot(np.linalg.inv(chol_f).dot(s))  # (4, n-1)
@@ -68,13 +85,15 @@ class Simulation:
         return lds
 
     def get_root(self, dl: P, min_r: float, max_r: float) -> float:
+        # ------------- compute limited development roots
         roots = P.roots(dl)
+
         # ------------- select real roots
         # In our case roots is dim 1 so np.where is a tuple of just one element.
         no_imag = np.imag(roots) == 0
         real_idxs = np.argwhere(no_imag).flatten()
         real_roots = np.real(np.take(roots, real_idxs))
-        logger.info(f"{real_roots=}")
+
         # ------------- select the roots that respect the constrains
         w = (1 + real_roots + min_r > 0) & (real_roots + max_r < 1)
         if not np.any(w):
@@ -88,7 +107,7 @@ class Simulation:
         return root
 
     def __call__(self):
-        s = self.correlate()  # daily returns with the same covariance as self.cov_h
+        s = self.correlate()
         lds = self.ld(s, self.er, order=3)
 
         min_daily_returns = s.min(axis=-1)
@@ -122,7 +141,7 @@ if __name__ == "__main__":
         cov_h = np.ones((3, 3))
         simu = Simulation(cov_h, [0.05, -0.04, 0.1], 50)
         s = simu.correlate()
-    except NotSymDefPos:
+    except CovNotSymDefPos:
         print(f"fails as expected!")
 
     print(f"------------------ Simulation \n")
