@@ -156,15 +156,22 @@ class Simulation:
         self, order: int = 10, precision: Optional[float] = None
     ) -> Tuple[npt.NDArray, npt.NDArray, npt.NDArray]:
         # future_price (m + 1, k)
+
+        # ------------- correlate simulated daily returns with historical ones
         correlated_returns = self.correlate()
+
+        # ------------- adjust daily returns to obtain the anual return
         adjustment = self.get_returns_adjustment(correlated_returns, order=order)
         simulated_returns = correlated_returns + adjustment
 
+        # ------------- check that the covariance is correct
         cov_s = np.cov(simulated_returns)
         self.check_covariance(cov_s)
 
+        # ------------- check that the daily returns are correct
         self.check_returns(simulated_returns)
 
+        # Compute simulated prices
         future_prices = self.get_future_prices(self.init_prices, simulated_returns)
 
         return simulated_returns, cov_s, future_prices
