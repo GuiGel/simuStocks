@@ -11,10 +11,19 @@ from simustocks.stocks import Stocks
 
 logger = logging.getLogger("simustocks")
 
+# dr: daily returns
+# er: expected anual returns
+# cov_h: historical daily returns covariance
+# chol_h:
+# cov_c: correlated covariance
+# cov_f: future covariance
+# dr: daily returns
+# sim_dr
+
 
 class Simulation:
     def __init__(self, stock: Stocks, er: Dict[str, float], m: int) -> None:
-        """_summary_
+        """Simulate
 
         Args:
             cov_h (npt.NDArray): Historical prices covariance. Matrix of shape
@@ -22,60 +31,66 @@ class Simulation:
                 prices.
             er (npt.ArrayLike): The expected anual returns for each stocks.
                 List of shape (k, ) where k is the number of stocks.
-            m (int): The number of daily returns to simulate.
+            m (int): The number of future daily returns.
         """
+
+        # TODO check that er are strictly positives and m > 0
+
         self.k, n = stock.prices.shape
         self.stock = stock
         self.cov_h = stock.cov  # historical covariance
-        self.er = np.array(list(er.values()))
+        self.er: npt.NDArray[np.float64] = np.array(list(er.values()))
         self.m = m
 
         assert len(self.er), len(self.er) == self.cov_h.shape
         assert m > 0
 
     @property
-    def init_prices(self):
+    def init_prices(self) -> npt.NDArray[np.float64]:
         # Get the initialization price for the simulation, the last
         # prices of the historical prices
         return self.stock.prices[:, -1:]  # (k, 1)
 
-    def correlate(self):
+    def correlate(self) -> npt.NDArray[np.float64]:
         """Create random vectors that have a given covariance matrix"""
         try:
             chol_h = la.cholesky(self.cov_h)
         except la.LinAlgError as e:
             raise CovNotSymDefPos(self.cov_h, e)
 
-        s = np.random.normal(
-            0, 1, size=(self.k, self.m)
-        )  # random simulated prices daily returns
-        cov_s = np.cov(s)
-        chol_f = np.linalg.cholesky(cov_s)
-        g = chol_h.dot(np.linalg.inv(chol_f).dot(s))  # (k, m)
+        rd = np.random.normal(0, 1, size=(self.k, self.m))
+        cov_rd = np.cov(rd)
+        try:
+            chol_rd = la.cholesky(cov_rd)
+        except la.LinAlgError as e:
+            raise CovNotSymDefPos(cov_rd, e)
+        rd_corr = chol_h.dot(np.linalg.inv(chol_rd).dot(rd))  # (k, m)
 
         # g are daily returns that must all be inferior to 1!
-        if np.all(g < 1):
+        if np.all(rd_corr < 1):
             logger.warning("Correlated daily returns not all inf to 1!")
 
-        return g  # (k, k)
+        return rd_corr  # (k, m)
 
     @staticmethod
-    def ld(g: npt.NDArray, er: npt.NDArray, order: int = 4):
-        # g (k, m)
-        # er (k)
+    def get_log_taylor_series(
+        cr: npt.NDArray[np.float64], er: npt.NDArray[np.float64], order: int = 4
+    ):
+        # cr: correlated daily returns (k, m)
+        # er: anual expected returns (k)
         # limited development of the function ln(1+x) with x = rc + alpha
-        # Returns array of polynomials
+        # Returns array of polynomials of shape (k,)
         # TODO check that Here 1 + expected returns is always be positive!
 
         assert np.all(er > -1)
         p = P([0, 1])
-        x = np.array(p) + g
+        x = np.array(p) + cr  # array of polynomials
         assert order > 1
         lds = x.sum(axis=-1)
         for i in range(2, order):
             lds += (-1) ** (i - 1) / i * (x**i).sum(axis=-1)
         lds -= np.log(1 + er)
-        return lds
+        return lds  # (k,)
 
     def get_root(self, dl: P, min_r: float, max_r: float) -> float:
         # ------------- compute limited development roots
@@ -99,12 +114,15 @@ class Simulation:
             root = select_roots[0]
         return root
 
-    def get_returns_adjustment(self, s: npt.NDArray, order: int = 10) -> npt.NDArray:
+    def get_returns_adjustment(
+        self, cr: npt.NDArray[np.float64], order: int = 10
+    ) -> npt.NDArray[np.float64]:
+        # cr: correlated daily returns
         # order > 2
-        lds = self.ld(s, self.er, order=order)
+        lds = self.get_log_taylor_series(cr, self.er, order=order)
 
-        min_daily_returns = s.min(axis=-1)
-        max_daily_returns = s.max(axis=-1)
+        min_daily_returns = cr.min(axis=-1)
+        max_daily_returns = cr.max(axis=-1)
 
         alpha: List[float] = []
         for dl, r_min, r_max in zip(lds, min_daily_returns, max_daily_returns):
@@ -118,12 +136,15 @@ class Simulation:
     def get_future_prices(
         self, init_prices: npt.NDArray, returns: npt.NDArray
     ) -> npt.NDArray:
+        # init_prices: shape (k, 1)
+        # returns: shape (k, m)
+        # return: shape (k, m + 1)
         returns_extend = np.concatenate(
             [np.ones((self.k, 1)), (returns + 1).cumprod(axis=1)], axis=1
         )  # (k, m + 1)
         prices = (
             returns_extend * init_prices
-        ).T  # Reconstruct the price from the last prices values. (k, m + 1)
+        )  # Reconstruct the price from the last prices values. (k, m + 1)
         return prices  # (k, m + 1)
 
     def check_returns(self, simulated_returns):
@@ -155,7 +176,8 @@ class Simulation:
     def __call__(
         self, order: int = 10, precision: Optional[float] = None
     ) -> Tuple[npt.NDArray, npt.NDArray, npt.NDArray]:
-        # future_price (m + 1, k)
+        # simulated_returns (k, m)
+        # future_price (k, m + 1)
 
         # ------------- correlate simulated daily returns with historical ones
         correlated_returns = self.correlate()

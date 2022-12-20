@@ -16,7 +16,7 @@ logging.basicConfig(
 
 # -------------- Take real stock prices
 stocks = ["ge", "intc", "amd", "gold", "spy", "ko", "pep"]
-start, end = datetime(2017, 1, 1), datetime(2020, 1, 1)
+start, end = datetime(2019, 1, 1), datetime(2020, 1, 1)
 df = web.DataReader(stocks, "stooq", start=start, end=end)
 df_prices = df["Close"]
 
@@ -32,17 +32,18 @@ expected_returns = {
     "ko": 0.08,
     "pep": 0.01,
 }
+
 simulation = Simulation(stocks_history, er=expected_returns, m=254)
 future_returns, future_cov, future_prices = simulation(order=12)
 
 # -------------- Check that the simulated prices are correct
-def get_returns(array: npt.NDArray) -> npt.NDArray:
-    # array (n, k)  n > 1
+def get_returns(array: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    # array (k, n)  n > 1
     # output (n - 1, k)
     return np.diff(array, axis=0) / array[:-1, :]
 
 
-recovered_returns = get_returns(future_prices)
+recovered_returns = get_returns(future_prices.T)
 np.allclose(recovered_returns, future_returns.T)
 history_returns = get_returns(stocks_history.prices.T)
 

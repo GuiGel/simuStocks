@@ -23,7 +23,7 @@ class Stocks(BaseModel):
     df: pd.DataFrame  # DataFrame (n, k)
 
     @property
-    def prices(self) -> npt.NDArray:
+    def prices(self) -> npt.NDArray[np.float64]:
         return self.df.to_numpy().T  # shape (k, n)
 
     @validator("df")
@@ -31,11 +31,11 @@ class Stocks(BaseModel):
         return prices_schema(v)
 
     @property
-    def cov(self) -> npt.NDArray:
+    def cov(self) -> npt.NDArray[np.float64]:
         return np.cov(self.returns)  # (k, k)
 
     @property
-    def returns(self) -> npt.NDArray:
+    def returns(self) -> npt.NDArray[np.float64]:
         return self.df.pct_change()[1:].to_numpy().T  # (k, n-1)
 
     class Config:
