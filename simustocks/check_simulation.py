@@ -17,8 +17,8 @@ logging.basicConfig(
 # -------------- Take real stock prices
 stocks = ["ge", "intc", "amd", "gold", "spy", "ko", "pep"]
 start, end = datetime(2017, 1, 1), datetime(2020, 1, 1)
-df = web.DataReader(stocks, "yahoo", start=start, end=end)
-df_prices = df["Adj Close"]
+df = web.DataReader(stocks, "stooq", start=start, end=end)
+df_prices = df["Close"]
 
 
 # -------------- Simulate future prices
